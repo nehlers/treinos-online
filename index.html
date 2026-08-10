@@ -132,6 +132,13 @@
   .setrow{
     display:grid; grid-template-columns:34px 1fr 1fr 46px; gap:8px; align-items:center; margin-bottom:8px;
   }
+  .setrow.setrow-head{
+    margin-bottom:6px; padding:0 2px;
+  }
+  .setrow.setrow-head div{
+    font-size:10.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); text-align:center;
+  }
+  .setrow.setrow-head div:first-child{text-align:left;}
   .setrow .setnum{
     width:28px; height:28px; border-radius:50%; background:var(--surface-3); color:var(--text-dim);
     display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;
@@ -637,6 +644,12 @@ function renderTreino(){
           <div class="checkbtn ${entry.completedDuration?'done':''}" data-dur="${escAttr(ex.name)}">✓</div>
         </div>`;
       } else {
+        html += `<div class="setrow setrow-head">
+            <div></div>
+            <div>KG</div>
+            <div>REPS</div>
+            <div></div>
+          </div>`;
         entry.sets.forEach((s, idx) => {
           html += `<div class="setrow">
             <div class="setnum">${idx+1}</div>
