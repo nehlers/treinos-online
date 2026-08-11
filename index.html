@@ -201,6 +201,9 @@
   .statcard .slabel{font-size:10.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; font-weight:800;}
   .statcard .sval{font-size:22px; font-weight:800; margin-top:4px;}
   .statcard canvas{width:100%; height:44px; margin-top:8px; display:block;}
+  .evocard{padding:14px 14px 10px;}
+  .evocard .slabel{font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; font-weight:800;}
+  .evocanvas{width:100%; height:120px; display:block; margin-top:4px;}
   .iconbtn{background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim); border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:16px; cursor:pointer;}
 
   .planitem{display:flex; justify-content:space-between; align-items:center; padding:11px 0; border-bottom:1px solid var(--border); gap:10px;}
@@ -253,8 +256,9 @@
     <div class="num" id="restNum">60</div>
   </div>
   <div class="restactions">
-    <button class="btn ghost" id="restAdd">+15s</button>
+    <button class="btn ghost" id="restSub">-15s</button>
     <button class="btn primary" id="restSkip">Pular</button>
+    <button class="btn ghost" id="restAdd">+15s</button>
   </div>
 </div>
 
@@ -520,6 +524,14 @@ document.getElementById('restAdd').addEventListener('click', () => {
   restTimer.remaining += 15; restTimer.total = Math.max(restTimer.total, restTimer.remaining);
   updateRestUI();
 });
+document.getElementById('restSub').addEventListener('click', () => {
+  restTimer.remaining -= 15;
+  if(restTimer.remaining <= 0){
+    finishRestTimer();
+  } else {
+    updateRestUI();
+  }
+});
 function beep(){
   try{
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -663,7 +675,15 @@ function renderTreino(){
     });
   });
 
-  html += `<div style="height:6px;"></div>`;
+  const persistedForToday = findLog(state.selectedDate, plan.id, workout.title);
+  const isFinished = !!(persistedForToday && persistedForToday.finishedAt);
+  html += `<button class="btn ${isFinished ? 'ghost' : 'primary'}" id="btnFinishWorkout" style="margin-top:6px;">
+    ${isFinished ? '✓ Treino concluído — toque para desfazer' : 'Finalizar treino'}
+  </button>`;
+  if(isFinished){
+    const t = new Date(persistedForToday.finishedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    html += `<div class="hint" style="text-align:center;margin-top:8px;">Concluído às ${t}</div>`;
+  }
 
   el.innerHTML = html;
   saveState();
@@ -675,6 +695,12 @@ function renderTreino(){
   }));
   document.getElementById('workoutDate').addEventListener('change', (e) => {
     state.selectedDate = e.target.value;
+    render();
+  });
+  document.getElementById('btnFinishWorkout').addEventListener('click', () => {
+    const l = getPersistedLog(state.selectedDate, plan, workout);
+    l.finishedAt = l.finishedAt ? null : new Date().toISOString();
+    saveState();
     render();
   });
   el.querySelectorAll('input[data-ex]').forEach(inp => {
@@ -729,7 +755,7 @@ function renderHistorico(){
     html += `<details class="logitem">
       <summary>
         <div>
-          <div class="lidate">${fmtDateBR(log.date)}</div>
+          <div class="lidate">${fmtDateBR(log.date)} ${log.finishedAt ? '<span class="pill on" style="margin-left:6px;">concluído</span>' : ''}</div>
           <div class="liwk">${esc(log.workoutTitle)} · ${doneSets}/${totalSets} séries</div>
         </div>
         <div class="liarrow">›</div>
@@ -779,8 +805,8 @@ function renderMedidas(){
 
   let html = daysHint;
 
-  // stat cards com sparkline
-  html += `<div class="statgrid">`;
+  // ---- Evolução: gráficos grandes, um por medida, bem visíveis ----
+  html += `<div class="section-head" style="margin-top:0;"><h3>Evolução</h3></div>`;
   fields.forEach(f => {
     const pts = sorted.filter(m => m.values[f.key] != null && m.values[f.key] !== '').map(m => ({date:m.date, value: parseFloat(m.values[f.key])}));
     const curr = pts.length ? pts[pts.length-1].value : null;
@@ -791,10 +817,24 @@ function renderMedidas(){
       const cls = d < 0 ? 'down' : d > 0 ? 'up' : 'same';
       deltaHtml = `<span class="delta ${cls}">${d>0?'+':''}${d} ${f.unit}</span>`;
     }
+    html += `<div class="card evocard">
+      <div class="row" style="align-items:baseline; margin-bottom:2px;">
+        <div class="slabel">${esc(f.label)}</div>
+        <div style="margin-left:auto; font-size:18px; font-weight:800;">${curr != null ? curr + ' ' + f.unit : '—'}</div>
+        ${deltaHtml}
+      </div>
+      <canvas id="evochart_${f.key}" class="evocanvas"></canvas>
+    </div>`;
+  });
+
+  // stat cards resumo compacto (mesmos dados, visão rápida lado a lado)
+  html += `<div class="statgrid">`;
+  fields.forEach(f => {
+    const pts = sorted.filter(m => m.values[f.key] != null && m.values[f.key] !== '').map(m => parseFloat(m.values[f.key]));
+    const curr = pts.length ? pts[pts.length-1] : null;
     html += `<div class="statcard">
       <div class="slabel">${esc(f.label)}</div>
-      <div class="sval">${curr != null ? curr + ' ' + f.unit : '—'} ${deltaHtml}</div>
-      <canvas id="chart_${f.key}" width="300" height="44"></canvas>
+      <div class="sval">${curr != null ? curr + ' ' + f.unit : '—'}</div>
     </div>`;
   });
   html += `</div>`;
@@ -844,9 +884,9 @@ function renderMedidas(){
 
   // draw charts
   fields.forEach(f => {
-    const canvas = document.getElementById('chart_' + f.key);
-    const pts = sorted.filter(m => m.values[f.key] != null && m.values[f.key] !== '').map(m => parseFloat(m.values[f.key]));
-    drawSparkline(canvas, pts);
+    const canvas = document.getElementById('evochart_' + f.key);
+    const pts = sorted.filter(m => m.values[f.key] != null && m.values[f.key] !== '').map(m => ({date:m.date, value: parseFloat(m.values[f.key])}));
+    drawEvolutionChart(canvas, pts, f.unit);
   });
 
   document.getElementById('btnSaveMeasure').addEventListener('click', () => {
@@ -890,33 +930,81 @@ function renderMedidas(){
     render();
   });
 }
-function drawSparkline(canvas, values){
+function drawEvolutionChart(canvas, points, unit){
   if(!canvas) return;
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth || 130, h = 44;
+  const w = canvas.clientWidth || 300, h = 120;
   canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.height = h + 'px';
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0,0,w,h);
-  if(values.length < 2){
-    ctx.fillStyle = '#666c78'; ctx.font = '11px sans-serif';
-    ctx.fillText(values.length ? 'apenas 1 registro' : 'sem dados', 0, h/2);
+
+  const padL = 8, padR = 8, padT = 14, padB = 22;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+
+  if(!points.length){
+    ctx.fillStyle = '#666c78'; ctx.font = '12px sans-serif';
+    ctx.fillText('Sem registros ainda — adicione sua primeira medição abaixo.', padL, h/2);
     return;
   }
-  const min = Math.min(...values), max = Math.max(...values);
-  const range = (max - min) || 1;
-  const pad = 6;
+  if(points.length === 1){
+    const x = padL + plotW/2, y = padT + plotH/2;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fillStyle = '#c8ff4d'; ctx.fill();
+    ctx.fillStyle = '#9aa1ad'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('1 registro · ' + fmtDateBR(points[0].date), x, h - 4);
+    ctx.fillStyle = '#eef0f2'; ctx.font = '12px sans-serif';
+    ctx.fillText(points[0].value + ' ' + unit, x, y - 12);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  const values = points.map(p => p.value);
+  let min = Math.min(...values), max = Math.max(...values);
+  if(min === max){ min -= 1; max += 1; }
+  const rangePad = (max - min) * 0.15;
+  min -= rangePad; max += rangePad;
+  const range = max - min;
+
+  // linha guia horizontal central
+  ctx.strokeStyle = '#2a2e37'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, padT + plotH/2); ctx.lineTo(w - padR, padT + plotH/2); ctx.stroke();
+
+  const coords = points.map((p,i) => ({
+    x: padL + (i/(points.length-1)) * plotW,
+    y: padT + plotH - ((p.value - min)/range) * plotH,
+    ...p
+  }));
+
+  // área suave sob a linha
   ctx.beginPath();
-  values.forEach((v,i) => {
-    const x = pad + (i/(values.length-1)) * (w - pad*2);
-    const y = h - pad - ((v - min)/range) * (h - pad*2);
-    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  ctx.moveTo(coords[0].x, padT + plotH);
+  coords.forEach(c => ctx.lineTo(c.x, c.y));
+  ctx.lineTo(coords[coords.length-1].x, padT + plotH);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(200,255,77,0.08)';
+  ctx.fill();
+
+  // linha
+  ctx.beginPath();
+  coords.forEach((c,i) => { if(i===0) ctx.moveTo(c.x,c.y); else ctx.lineTo(c.x,c.y); });
+  ctx.strokeStyle = '#c8ff4d'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // pontos
+  coords.forEach((c,i) => {
+    ctx.beginPath(); ctx.arc(c.x, c.y, i === coords.length-1 ? 4 : 2.5, 0, Math.PI*2);
+    ctx.fillStyle = i === coords.length-1 ? '#c8ff4d' : '#8fb536';
+    ctx.fill();
   });
-  ctx.strokeStyle = '#c8ff4d'; ctx.lineWidth = 2; ctx.lineJoin='round'; ctx.stroke();
-  // last point dot
-  const lastX = pad + (w - pad*2);
-  const lastY = h - pad - ((values[values.length-1]-min)/range) * (h-pad*2);
-  ctx.beginPath(); ctx.arc(lastX, lastY, 3, 0, Math.PI*2); ctx.fillStyle = '#c8ff4d'; ctx.fill();
+
+  // datas: primeira e última
+  ctx.fillStyle = '#666c78'; ctx.font = '10.5px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(fmtDateBR(points[0].date), padL, h - 6);
+  ctx.textAlign = 'right';
+  ctx.fillText(fmtDateBR(points[points.length-1].date), w - padR, h - 6);
+  ctx.textAlign = 'left';
 }
 
 /* ---------------------------------------------------------
