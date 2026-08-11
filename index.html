@@ -367,40 +367,104 @@ function parseSeriesOrDuration(str, columnType){
 }
 
 /* ---------------------------------------------------------
+   PROMPT DE IA PARA GERAR O .MD
+--------------------------------------------------------- */
+const AI_PROMPT_TEMPLATE = [
+'Preciso que você gere um arquivo em Markdown (.md) com o meu plano de treino, para eu importar em um app de treino que uso. Siga EXATAMENTE a estrutura abaixo — os símbolos #, |, e o texto "Séries"/"Duração" são obrigatórios, pois um programa vai ler esse arquivo automaticamente.',
+'',
+'MODELO A SEGUIR:',
+'',
+'# 🏋️ Plano de Treino — [meu nome]',
+'**[idade] anos · [altura] · [peso] · [nº]x por semana**',
+'> [observação geral, ex: lesão ou cuidado especial — pode ter várias linhas assim, ou remover se não houver]',
+'',
+'---',
+'',
+'## Treino A · [nome do grupo muscular, ex: Peito e Tríceps]',
+'> [observação específica desse treino — opcional]',
+'',
+'### Aquecimento',
+'| Exercício | Duração | Dica |',
+'|---|---|---|',
+'| [nome do exercício] | [ex: 10 min] | [dica opcional] |',
+'',
+'### Treino Principal',
+'| Exercício | Séries | Dica |',
+'|---|---|---|',
+'| [nome do exercício] | [ex: 3x12 = 3 séries de 12 repetições] | [dica opcional] |',
+'',
+'### Abdômen',
+'| Exercício | Séries | Dica |',
+'|---|---|---|',
+'| [nome do exercício] | [ex: 3x20] | [dica opcional] |',
+'',
+'---',
+'',
+'## Treino B · [nome do próximo grupo muscular]',
+'(repita a mesma estrutura do Treino A — quantos treinos eu precisar: B, C, D...)',
+'',
+'---',
+'',
+'## 😴 Descanso',
+'Recuperação muscular.',
+'',
+'REGRAS IMPORTANTES:',
+'- Cada treino novo começa com "## Treino [Letra] · [nome]".',
+'- As subseções começam com "###" — pode usar "Aquecimento", "Treino Principal", "Abdômen" ou outro nome que fizer sentido (ex: "Bloco 1", "Cardio").',
+'- Nas tabelas, a segunda coluna deve se chamar exatamente "Séries" (quando for tipo 3x12) ou "Duração" (quando for por tempo, tipo 10 min).',
+'- Não remova a linha "|---|---|---|" de cada tabela.',
+'- Não invente seções fora desse modelo.',
+'- Finalize sempre com "## 😴 Descanso".',
+'',
+'Agora gere o meu plano de treino nesse formato, usando estas informações sobre mim e meus treinos:',
+'[cole aqui seus exercícios, séries/repetições, pesos que já usa, dias da semana, lesões ou restrições, e qualquer outra observação relevante]'
+].join('\n');
+
+/* ---------------------------------------------------------
    PLAN MANAGEMENT
 --------------------------------------------------------- */
 function getActivePlan(){
   return state.plans.find(p => p.id === state.activePlanId) || null;
 }
+function processMarkdownText(text, { onInvalid, onError } = {}){
+  try{
+    const parsed = parseWorkoutMarkdown(text);
+    if(!parsed.workouts.length){
+      if(onInvalid) onInvalid();
+      else alert('Não consegui encontrar treinos nesse texto. Confira se o formato segue o modelo (títulos "## Treino X", tabelas com "Séries"/"Duração") e tente novamente.');
+      return false;
+    }
+    const doSwitch = () => {
+      const plan = { id: uid(), ...parsed, uploadedAt: new Date().toISOString() };
+      state.plans.push(plan);
+      state.activePlanId = plan.id;
+      state.selectedWorkoutTitle = null;
+      saveState();
+      setTab('treino');
+      render();
+    };
+    const active = getActivePlan();
+    if(active){
+      if(confirm(`Isso vai substituir o treino ativo ("${active.title.replace(/[🏋️#]/g,'').trim()}") por este novo treino. O treino antigo fica salvo no histórico. Continuar?`)){
+        doSwitch();
+      }
+    } else {
+      doSwitch();
+    }
+    return true;
+  }catch(err){
+    if(onError) onError();
+    else alert('Não consegui interpretar esse texto. Verifique se o formato está correto.');
+    return false;
+  }
+}
 function handleFile(file){
   const reader = new FileReader();
   reader.onload = function(e){
-    try{
-      const parsed = parseWorkoutMarkdown(e.target.result);
-      if(!parsed.workouts.length){
-        alert('Não consegui encontrar treinos nesse arquivo. Confira o formato do .md e tente novamente.');
-        return;
-      }
-      const doSwitch = () => {
-        const plan = { id: uid(), ...parsed, uploadedAt: new Date().toISOString() };
-        state.plans.push(plan);
-        state.activePlanId = plan.id;
-        state.selectedWorkoutTitle = null;
-        saveState();
-        setTab('treino');
-        render();
-      };
-      const active = getActivePlan();
-      if(active){
-        if(confirm(`Isso vai substituir o treino ativo ("${active.title.replace(/[🏋️#]/g,'').trim()}") por este novo arquivo. O treino antigo fica salvo no histórico. Continuar?`)){
-          doSwitch();
-        }
-      } else {
-        doSwitch();
-      }
-    }catch(err){
-      alert('Não consegui ler esse arquivo. Verifique se é um .md válido.');
-    }
+    processMarkdownText(e.target.result, {
+      onInvalid: () => alert('Não consegui encontrar treinos nesse arquivo. Confira o formato do .md e tente novamente.'),
+      onError: () => alert('Não consegui ler esse arquivo. Verifique se é um .md válido.')
+    });
   };
   reader.readAsText(file, 'utf-8');
 }
@@ -595,13 +659,61 @@ function renderTreino(){
   const plan = getActivePlan();
   if(!plan){
     el.innerHTML = `
-      <div class="empty">
-        <div class="big">📄</div>
-        <h3 class="display" style="font-size:17px;margin-bottom:6px;">Nenhum treino carregado</h3>
-        <p style="font-size:13.5px;color:var(--text-dim);margin:0 0 18px;">Envie o arquivo .md com o seu plano de treino para começar a registrar.</p>
+      <div class="card" style="text-align:center;padding:28px 20px 22px;">
+        <div class="big" style="font-size:34px;margin-bottom:8px;">📄</div>
+        <h3 class="display" style="font-size:16px;margin-bottom:6px;">Nenhum treino carregado</h3>
+        <p style="font-size:13.5px;color:var(--text-dim);margin:0 0 16px;">Se você já tem o arquivo .md do seu treino, envie direto:</p>
         <button class="btn primary" id="btnUploadEmpty">Enviar arquivo .md</button>
+      </div>
+
+      <div class="section-head" style="margin-top:26px;"><h3>Ainda não tenho um treino em .md</h3></div>
+      <div class="card">
+        <p style="font-size:13.5px;color:var(--text-dim);margin:0 0 14px;line-height:1.5;">
+          Sem problema — peça pra qualquer IA de sua preferência (ChatGPT, Gemini, Claude, Meta AI...) gerar esse arquivo pra você. Copie o prompt pronto abaixo, cole na IA junto com os detalhes do seu treino, e peça pra ela seguir o modelo à risca.
+        </p>
+        <ol style="font-size:13px;color:var(--text-dim);padding-left:18px;margin:0 0 16px;line-height:1.7;">
+          <li>Toque em <strong style="color:var(--text);">"Copiar prompt"</strong> abaixo.</li>
+          <li>Cole numa IA de sua preferência, junto com seus exercícios, séries e observações.</li>
+          <li>Peça pra IA seguir o modelo exatamente como está.</li>
+          <li>Baixe como .md e envie aqui em cima <strong style="color:var(--text);">ou</strong> simplesmente copie a resposta e cole na caixa mais abaixo.</li>
+        </ol>
+        <button class="btn primary" id="btnCopyPrompt" style="margin-bottom:10px;">📋 Copiar prompt para IA</button>
+        <textarea id="aiPromptBox" readonly rows="6" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);border-radius:10px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;resize:vertical;"></textarea>
+        <div class="hint">A maioria das IAs deixa baixar a resposta como arquivo. Se não der, copie o texto e salve manualmente com a extensão .md em qualquer editor de texto ou app de notas.</div>
+      </div>
+
+      <div class="section-head"><h3>Ou cole a resposta da IA direto aqui</h3></div>
+      <div class="card">
+        <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;line-height:1.5;">Não quer nem salvar o arquivo .md? Cole o texto que a IA gerou aqui embaixo e toque em usar — sem precisar baixar nada.</p>
+        <textarea id="pasteMdBox" rows="6" placeholder="Cole aqui o markdown gerado pela IA..." style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;resize:vertical;margin-bottom:10px;"></textarea>
+        <button class="btn primary" id="btnUsePasted">Usar este treino</button>
       </div>`;
     document.getElementById('btnUploadEmpty').addEventListener('click', () => document.getElementById('fileInput').click());
+    document.getElementById('btnUsePasted').addEventListener('click', () => {
+      const text = document.getElementById('pasteMdBox').value.trim();
+      if(!text){ alert('Cole o texto do treino antes de continuar.'); return; }
+      processMarkdownText(text);
+    });
+    const promptBox = document.getElementById('aiPromptBox');
+    promptBox.value = AI_PROMPT_TEMPLATE;
+    document.getElementById('btnCopyPrompt').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      let ok = false;
+      try{
+        await navigator.clipboard.writeText(AI_PROMPT_TEMPLATE);
+        ok = true;
+      }catch(err){
+        try{
+          promptBox.removeAttribute('readonly');
+          promptBox.focus(); promptBox.select();
+          ok = document.execCommand('copy');
+          promptBox.setAttribute('readonly', 'true');
+        }catch(err2){ ok = false; }
+      }
+      const original = btn.textContent;
+      btn.textContent = ok ? '✓ Prompt copiado!' : 'Não consegui copiar — selecione o texto abaixo manualmente';
+      setTimeout(() => { btn.textContent = original; }, 2200);
+    });
     return;
   }
 
@@ -1023,8 +1135,13 @@ function renderConfig(){
 
   html += `<div class="card">
     <h3 class="display" style="font-size:14px;margin-bottom:12px;">Plano de treino</h3>
-    <button class="btn primary" id="btnUploadNew">Enviar novo arquivo .md</button>
-    <div class="hint">Ao enviar um novo arquivo, o treino atual é arquivado (fica salvo no histórico) e o novo passa a ser o ativo.</div>
+    <button class="btn primary" id="btnUploadNew" style="margin-bottom:10px;">Enviar novo arquivo .md</button>
+    <details>
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);font-weight:700;padding:4px 0;">Ou colar o texto direto (sem arquivo)</summary>
+      <textarea id="pasteMdBoxConfig" rows="6" placeholder="Cole aqui o markdown gerado pela IA..." style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;resize:vertical;margin:10px 0;"></textarea>
+      <button class="btn ghost" id="btnUsePastedConfig">Usar este treino</button>
+    </details>
+    <div class="hint" style="margin-top:10px;">Ao trocar de treino, o treino atual é arquivado (fica salvo no histórico) e o novo passa a ser o ativo.</div>
   </div>`;
 
   if(state.plans.length){
@@ -1064,6 +1181,11 @@ function renderConfig(){
     saveState();
   });
   document.getElementById('btnUploadNew').addEventListener('click', () => document.getElementById('fileInput').click());
+  document.getElementById('btnUsePastedConfig').addEventListener('click', () => {
+    const text = document.getElementById('pasteMdBoxConfig').value.trim();
+    if(!text){ alert('Cole o texto do treino antes de continuar.'); return; }
+    processMarkdownText(text);
+  });
   el.querySelectorAll('[data-activate]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.activePlanId = btn.dataset.activate;
